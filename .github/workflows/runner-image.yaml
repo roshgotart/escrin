@@ -12,9 +12,6 @@ on:
 
 jobs:
   docker-build-and-push:
-    strategy:
-      matrix:
-        env: [local, ne]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -34,15 +31,11 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           file: worker/Dockerfile
-          build-args: |
-            WORKERD_TAG=v1.20240304.0
-            DEPLOY_ENV=${{ matrix.env }}
+          build-args: WORKERD_TAG=v1.20240304.0
           tags: |
-            yourusername/runner:${{ github.sha }}-${{ matrix.env }}
-            yourusername/runner:latest-${{ matrix.env }}
+            yourusername/escrin-runner:${{ github.sha }}
+            yourusername/escrin-runner:latest
           push: true
-          cache-from: type=registry,ref=docker.io/yourusername/runner:latest-${{ matrix.env }}
-          cache-to: type=inline
 
   eif-build-and-push:
     needs: docker-build-and-push
@@ -55,20 +48,10 @@ jobs:
 
       - name: Build EIF
         run: |
-          set -o pipefail
-          nitro-cli build-enclave --docker-uri docker.io/yourusername/runner:latest-ne --output-file escrin-runner.eif \
-          | tee escrin-runner.eif.json
+          nitro-cli build-enclave --docker-uri docker.io/yourusername/escrin-runner:latest --output-file escrin-runner.eif
 
-      - name: Upload EIF
+      - name: Upload EIF to GitHub Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: escrin-runner.eif
           path: escrin-runner.eif
-          if-no-files-found: error
-
-      - name: Upload measurements
-        uses: actions/upload-artifact@v4
-        with:
-          name: escrin-runner.eif.json
-          path: escrin-runner.eif.json
-          if-no-files-found: error
