@@ -16,7 +16,7 @@ RUN pnpm --filter "@escrin/worker" install --frozen-lockfile
 RUN pnpm --filter "@escrin/worker" build
 
 ARG DEPLOY_ENV
-RUN ./workerd compile worker/config/${DEPLOY_ENV}.capnp > escrin-runner
+RUN ./workerd compile worker/config/ne.capnp > escrin-runner
 
 FROM gcr.io/distroless/cc-debian12
 
