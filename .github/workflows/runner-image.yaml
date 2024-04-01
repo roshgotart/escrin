@@ -33,8 +33,8 @@ jobs:
           file: worker/Dockerfile
           build-args: WORKERD_TAG=v1.20240304.0
           tags: |
-            yourusername/escrin-runner:${{ github.sha }}
-            yourusername/escrin-runner:latest
+            roshgotart/escrin-runner:${{ github.sha }}
+            roshgotart/escrin-runner:latest
           push: true
 
   eif-build-and-push:
@@ -48,7 +48,7 @@ jobs:
 
       - name: Build EIF
         run: |
-          nitro-cli build-enclave --docker-uri docker.io/yourusername/escrin-runner:latest --output-file escrin-runner.eif
+          nitro-cli build-enclave --docker-uri docker.io/roshgotart/escrin-runner:latest --output-file escrin-runner.eif
 
       - name: Upload EIF to GitHub Artifacts
         uses: actions/upload-artifact@v4
