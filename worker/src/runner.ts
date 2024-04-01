@@ -63,9 +63,9 @@ export default new (class {
 
   public readonly fetch = wrapFetch(async (req: Request, env: RunnerEnv, ctx: ExecutionContext) => {
     const config = await parseWorkerConfig(req.headers.get('content-type'), req);
-    if (config.schedule && config.schedule !== '*/5 * * * *') {
-      throw new ApiError(400, 'unsupported schedule');
-    }
+    // if (config.schedule && config.schedule !== '*/5 * * * *') {
+    //   throw new ApiError(400, 'unsupported schedule');
+    // }
     const workerId = this.#nextWorkerId++;
     const worker = await this.#newWorker(env, config);
 
