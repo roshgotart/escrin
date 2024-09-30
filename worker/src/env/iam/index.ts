@@ -3,7 +3,7 @@ import { isHash } from 'viem';
 import { ApiError, decodeRequest, wrapFetch } from '../../rpc.js';
 
 import * as identity from './identity.js';
-import { handleGetKey } from './key.js';
+// import { handleGetKey } from './key.js';
 import * as types from './types.js';
 
 export type Env = Partial<{
