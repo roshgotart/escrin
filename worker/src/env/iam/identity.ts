@@ -35,7 +35,7 @@ async function acquireIdentitySsss(
 ): Promise<void> {
   if (params.ssss === undefined) throw new TypeError('ssss not provided');
 
-  const { optimisticGrants } = null;
+  // const { optimisticGrants } = null;
   //  await ssss.acquireIdentity({
   //   ...params,
   //   recipient: params.recipient ?? allocateAccount(requesterService).address,
@@ -43,8 +43,8 @@ async function acquireIdentitySsss(
   //   ssss: params.ssss,
   // });
 
-  if (optimisticGrants < params.ssss.quorum)
-    throw new ApiError(403, `optimistic quorum not reached`);
+  // if (optimisticGrants < params.ssss.quorum)
+  //   throw new ApiError(403, `optimistic quorum not reached`);
 }
 
 async function acquireIdentitySapphire(
