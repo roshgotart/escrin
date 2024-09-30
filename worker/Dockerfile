@@ -12,6 +12,7 @@ RUN chmod a+x workerd
 
 COPY ./ ./
 
+
 RUN pnpm --filter "@escrin/worker" install --frozen-lockfile
 RUN pnpm --filter "@escrin/worker" build
 
