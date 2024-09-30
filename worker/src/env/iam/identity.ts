@@ -5,8 +5,8 @@ import {
   IPermitter as PermitterAbi,
 } from '@escrin/evm/abi';
 
-import { ApiError } from '../../rpc.js';
-import * as ssss from '../../ssss/index.js';
+// import { ApiError } from '../../rpc.js';
+// import * as ssss from '../../ssss/index.js';
 import { allocateAccount } from './account.js';
 import { getPublicClient, getWalletClient } from './chains.js';
 import * as types from './types.js';
@@ -33,7 +33,7 @@ async function acquireIdentitySsss(
   requesterService: string,
   params: types.AcquireIdentityParams,
 ): Promise<void> {
-  if (params.ssss === undefined) throw new TypeError('ssss not provided');
+  if (params.ssss === undefined) throw new TypeError('ssss not provided',requesterService);
 
   // const { optimisticGrants } = null;
   //  await ssss.acquireIdentity({
