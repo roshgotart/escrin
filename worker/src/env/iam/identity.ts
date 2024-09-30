@@ -36,7 +36,7 @@ async function acquireIdentitySsss(
   if (params.ssss === undefined) throw new TypeError('ssss not provided');
 
   console.log(requesterService);
-  
+
   // const { optimisticGrants } = null;
   //  await ssss.acquireIdentity({
   //   ...params,
