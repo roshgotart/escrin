@@ -31,7 +31,7 @@ export default new (class {
     }
 
     if (method === ('get-key' satisfies types.GetKeyRequest['method'])) {
-      return handleGetKey(requester, types.parseGetKeyParams(params));
+      return null
     }
 
     throw new ApiError(404, `unknown method: ${method}`);
