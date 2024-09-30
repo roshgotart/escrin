@@ -33,8 +33,10 @@ async function acquireIdentitySsss(
   requesterService: string,
   params: types.AcquireIdentityParams,
 ): Promise<void> {
-  if (params.ssss === undefined) throw new TypeError('ssss not provided', requesterService);
+  if (params.ssss === undefined) throw new TypeError('ssss not provided');
 
+  console.log(requesterService);
+  
   // const { optimisticGrants } = null;
   //  await ssss.acquireIdentity({
   //   ...params,
