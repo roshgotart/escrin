@@ -25,10 +25,7 @@ export async function handleGetKey(
     }
 
     return {
-      key: await getSsssOmniKey(
-        params as SetRequired<types.EvmKeyStoreParams, 'ssss'>,
-        requesterAccount,
-      ),
+      key: ""
     };
   }
 
@@ -40,22 +37,22 @@ export async function handleGetKey(
   return _exhaustiveCheck;
 }
 
-async function getSsssOmniKey(
-  params: SetRequired<types.EvmKeyStoreParams, 'ssss'>,
-  requesterAccount: PrivateKeyAccount,
-): Promise<Hex> {
-  const { network, identity, ssss: ssssParams } = params;
-  const publicClient = getPublicClient(network.chainId, network.rpcUrl);
-  const currentVersion = await ssss.getSecretVersion(
-    publicClient,
-    ssssParams.hub,
-    identity.id,
-    'omni',
-  );
-  if (currentVersion > 0) return ssss.getSecret('omni', currentVersion, params, requesterAccount);
-  const walletClient = getWalletClient(requesterAccount, network.chainId, network.rpcUrl);
-  return ssss.dealNewSecret('omni', params, publicClient, walletClient);
-}
+// async function getSsssOmniKey(
+//   params: SetRequired<types.EvmKeyStoreParams, 'ssss'>,
+//   requesterAccount: PrivateKeyAccount,
+// ): Promise<Hex> {
+//   const { network, identity, ssss: ssssParams } = params;
+//   const publicClient = getPublicClient(network.chainId, network.rpcUrl);
+//   const currentVersion = await ssss.getSecretVersion(
+//     publicClient,
+//     ssssParams.hub,
+//     identity.id,
+//     'omni',
+//   );
+//   if (currentVersion > 0) return ssss.getSecret('omni', currentVersion, params, requesterAccount);
+//   const walletClient = getWalletClient(requesterAccount, network.chainId, network.rpcUrl);
+//   return ssss.dealNewSecret('omni', params, publicClient, walletClient);
+// }
 
 async function getSapphireOmniKey(
   params: types.EvmKeyStoreParams,
