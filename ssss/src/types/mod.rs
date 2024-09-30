@@ -2,7 +2,7 @@ pub mod api;
 
 use ethers::{
     middleware::contract::{Eip712, EthAbiType},
-    types::{Address, H256},
+    types::{Address, Bytes, H256, U256},
 };
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +18,12 @@ pub struct IdentityId(pub H256);
 impl From<H256> for IdentityId {
     fn from(h: H256) -> Self {
         Self(h)
+    }
+}
+
+impl std::fmt::Display for IdentityId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{:x}", self.0)
     }
 }
 
@@ -44,8 +50,8 @@ pub struct IdentityLocator {
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct ShareId {
-    pub secret_name: String,
     pub identity: IdentityLocator,
+    pub secret_name: String,
     pub version: ShareVersion,
 }
 
@@ -68,27 +74,43 @@ impl PermitterLocator {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Permit {
-    pub expiry: u64,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ChainState {
-    pub block: u64,
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ChainStateUpdate {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub block: Option<u64>,
-}
-
 #[derive(Clone)]
 #[cfg_attr(test, derive(Debug, PartialEq, Eq))]
 pub struct SecretShare {
-    pub index: u64,
+    pub meta: SecretShareMeta,
     pub share: zeroize::Zeroizing<Vec<u8>>,
+    pub blinder: zeroize::Zeroizing<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "EncodableSecretShareMeta", into = "EncodableSecretShareMeta")]
+pub struct SecretShareMeta {
+    pub index: u64,
+    pub commitments: Vec<Vec<u8>>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct EncodableSecretShareMeta {
+    index: u64,
+    commitments: Vec<Bytes>,
+}
+
+impl From<EncodableSecretShareMeta> for SecretShareMeta {
+    fn from(m: EncodableSecretShareMeta) -> Self {
+        Self {
+            index: m.index,
+            commitments: m.commitments.into_iter().map(|b| b.0.into()).collect(),
+        }
+    }
+}
+
+impl From<SecretShareMeta> for EncodableSecretShareMeta {
+    fn from(m: SecretShareMeta) -> Self {
+        Self {
+            index: m.index,
+            commitments: m.commitments.into_iter().map(Into::into).collect(),
+        }
+    }
 }
 
 #[derive(Clone, Serialize, Deserialize, zeroize::Zeroize)]
@@ -113,28 +135,28 @@ impl AsRef<[u8]> for WrappedKey {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
-pub struct EventIndex {
-    pub block: u64,
-    pub log_index: u64,
-}
-
-#[derive(Clone, Default, EthAbiType, Eip712)]
-#[eip712(
-    name = "SsssRequest",
-    version = "1",
-    chain_id = 0,
-    verifying_contract = "0x0000000000000000000000000000000000000000"
-)]
+#[derive(Clone, Debug, Default, EthAbiType, Eip712)]
+#[eip712(name = "SSSS", version = "1")]
 pub struct SsssRequest {
     pub method: String,
-    pub host: String,
-    pub path_and_query: String,
+    pub url: String,
     pub body: H256,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct PolicyPreamble {
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PolicyDocument {
     pub verifier: String,
-    pub policy: Vec<u8>,
+    pub policy: serde_json::Value,
+}
+
+#[derive(Clone, Debug, Default, EthAbiType, Eip712, Serialize, Deserialize)]
+pub struct SsssPermit {
+    pub registry: Address,
+    pub identity: H256,
+    pub recipient: Address,
+    pub grant: bool,
+    pub duration: u64,
+    pub nonce: Bytes,
+    pub pk: Bytes,
+    pub baseblock: U256,
 }

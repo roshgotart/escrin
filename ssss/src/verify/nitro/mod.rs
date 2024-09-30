@@ -20,7 +20,7 @@ pub struct NitroEnclaveVerifier;
 impl Verifier for NitroEnclaveVerifier {
     async fn verify(
         &self,
-        policy_bytes: &[u8],
+        raw_policy: serde_json::Value,
         req: RequestKind,
         identity: IdentityLocator,
         recipient: Address,
@@ -28,7 +28,7 @@ impl Verifier for NitroEnclaveVerifier {
         _context: &[u8],
         relayer: Option<Address>,
     ) -> Result<Verification, Error> {
-        let policy: Policy = ciborium::de::from_reader_with_recursion_limit(policy_bytes, 10)
+        let policy: Policy = serde_json::from_value(raw_policy)
             .map_err(|e| Error::PolicyDecode(anyhow::Error::from(e)))?;
 
         if policy.version != 1 {
@@ -72,7 +72,7 @@ impl Verifier for NitroEnclaveVerifier {
         Ok(Verification {
             nonce: ud.nonce,
             public_key: ud.public_key,
-            expiry: match req {
+            duration: match req {
                 RequestKind::Grant { duration } => Some(duration.min(policy.max_duration)),
                 RequestKind::Revoke => None,
             },
@@ -172,6 +172,16 @@ struct AttestationUserData {
     public_key: Vec<u8>,
     user_data: Vec<u8>,
     nonce: Vec<u8>,
+}
+
+impl std::fmt::Debug for AttestationUserData {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AttestationUserData")
+            .field("public_key", &hex::encode(&self.public_key))
+            .field("user_data", &hex::encode(&self.user_data))
+            .field("nonce", &hex::encode(&self.nonce))
+            .finish()
+    }
 }
 
 #[derive(Deserialize)]

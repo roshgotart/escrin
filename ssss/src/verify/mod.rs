@@ -2,7 +2,7 @@ mod nitro;
 
 use ethers::types::Address;
 
-use crate::types::{IdentityLocator, PolicyPreamble};
+use crate::types::{IdentityLocator, PolicyDocument};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RequestKind {
@@ -14,7 +14,7 @@ pub trait Verifier {
     #[allow(clippy::too_many_arguments)]
     async fn verify(
         &self,
-        policy_bytes: &[u8],
+        raw_policy: serde_json::Value,
         req: RequestKind,
         identity: IdentityLocator,
         recipient: Address,
@@ -48,7 +48,7 @@ pub enum Error {
 pub struct Verification {
     pub nonce: Vec<u8>,
     pub public_key: Vec<u8>,
-    pub expiry: Option<u64>,
+    pub duration: Option<u64>,
 }
 
 pub async fn verify(
@@ -60,27 +60,25 @@ pub async fn verify(
     ctx: &[u8],
     relayer: Option<Address>,
 ) -> Result<Verification, Error> {
-    let PolicyPreamble {
+    let PolicyDocument {
         verifier,
-        policy: policy_bytes,
-    } = ciborium::de::from_reader_with_recursion_limit(policy_bytes, 3)
-        .map_err(|e| Error::PolicyDecode(e.into()))?;
+        policy: raw_policy,
+    } = serde_json::from_slice(policy_bytes).map_err(|e| Error::PolicyDecode(e.into()))?;
 
     match verifier.as_str() {
         "nitro" => {
             nitro::NitroEnclaveVerifier
-                .verify(&policy_bytes, req, identity, recipient, auth, ctx, relayer)
+                .verify(raw_policy, req, identity, recipient, auth, ctx, relayer)
                 .await
         }
         #[cfg(debug_assertions)]
         "mock" => Ok(Verification {
-            nonce: {
-                let mut nonce = vec![0u8; 32];
-                rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut nonce);
-                nonce
-            },
+            nonce: ethers::utils::keccak256(ethers::types::H256::from_low_u64_ne(
+                (ssss::utils::now() >> 1) << 1, // permit up to 2s drift
+            ))
+            .into(),
             public_key: vec![],
-            expiry: Some(
+            duration: Some(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()

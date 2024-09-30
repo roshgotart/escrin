@@ -39,14 +39,14 @@ export type AcquireIdentityParams = AcqRelIdentityParams & {
   duration?: number;
   authorization?: Uint8Array | Hex;
   /** @experimental */
-  sssss?: iamTypes.SsssParams;
+  ssss?: iamTypes.SsssParams;
 };
 
 export type GetOmniKeyParams = {
   network: NetworkNameOrNetwork;
   identity: IdentityIdOrIdentity;
   /** @experimental */
-  sssss?: iamTypes.SsssParams;
+  ssss?: iamTypes.SsssParams;
 };
 
 export type NetworkNameOrNetwork = 'local' | `sapphire-${'testnet' | 'mainnet'}` | iamTypes.Network;
@@ -61,7 +61,7 @@ export type WorkerEnv = { config: Record<string, any>; iam: Fetcher; tpm?: Fetch
 export default function (callbacks: Callbacks) {
   return {
     fetch: wrapFetch(async (req: Request, env: WorkerEnv, ctx: ExecutionContext) => {
-      const { method, params: _ } = await decodeRequest(req);
+      const { method } = await decodeRequest(req);
       ctx.waitUntil(
         (async () => {
           if (method === 'tasks') {
@@ -137,7 +137,7 @@ class RunnerInterface implements Runner {
       authorization,
       duration,
       recipient,
-      sssss,
+      ssss,
     } = params;
     const network = getNetwork(networkNameOrNetwork);
     const identity = getIdentity(identityIdOrIdentity, network);
@@ -149,19 +149,19 @@ class RunnerInterface implements Runner {
       authorization: authorization instanceof Uint8Array ? toHex(authorization) : authorization,
       recipient,
       duration,
-      sssss,
+      ssss,
     });
   }
 
   async getOmniKey(params: GetOmniKeyParams): Promise<CryptoKey> {
-    const { network: networkNameOrNetwork, identity: identityIdOrIdentity, sssss } = params;
+    const { network: networkNameOrNetwork, identity: identityIdOrIdentity, ssss } = params;
     const network = getNetwork(networkNameOrNetwork);
     const identity = getIdentity(identityIdOrIdentity, network);
     const { key } = await rpc<iamTypes.GetKeyRequest>(this.#iam, 'get-key', {
       keyId: 'omni',
       network,
       identity,
-      sssss,
+      ssss,
     });
     return crypto.subtle.importKey('raw', hexToBytes(key), 'HKDF', false, [
       'deriveKey',

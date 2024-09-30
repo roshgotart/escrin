@@ -20,7 +20,7 @@ variable "ssh_key" {
 }
 
 variable "cloudflare" {
-  description = "Whether to restrict ingress to only Cloudflare IPs. Makes instance unreachable except Cloudflare's relays."
+  description = "Whether to restrict ingress to only Cloudflare IPs. Makes instance unreachable except through Cloudflare's relays."
   default     = false
 }
 
@@ -30,6 +30,23 @@ locals {
     Component   = "ssss",
     Environment = "${terraform.workspace}",
   }
+}
+
+resource "aws_kms_key" "signer" {
+  description              = "Escrin SSSS permit signer (${terraform.workspace})"
+  key_usage                = "SIGN_VERIFY"
+  customer_master_key_spec = "ECC_SECG_P256K1"
+  deletion_window_in_days  = 7
+  tags                     = local.tags
+
+  lifecycle {
+    prevent_destroy = false
+  }
+}
+
+resource "aws_kms_alias" "signer" {
+  name          = "alias/escrin-signer-${terraform.workspace}"
+  target_key_id = aws_kms_key.signer.key_id
 }
 
 resource "aws_dynamodb_table" "secrets" {
@@ -49,90 +66,13 @@ resource "aws_dynamodb_table" "secrets" {
     type = "N"
   }
 
-  point_in_time_recovery {
-    enabled = terraform.workspace != "dev"
-  }
-
-  lifecycle {
-    prevent_destroy = true
-  }
-}
-
-resource "aws_dynamodb_table" "permits" {
-  name         = "escrin-permits-${terraform.workspace}"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "identity"
-  range_key    = "recipient"
-  tags         = local.tags
-
-  attribute {
-    name = "identity"
-    type = "S"
-  }
-
-  attribute {
-    name = "recipient"
-    type = "S"
-  }
-
   ttl {
     attribute_name = "expiry"
     enabled        = true
   }
 
-  point_in_time_recovery {
-    enabled = terraform.workspace != "dev"
-  }
-
   lifecycle {
-    prevent_destroy = true
-  }
-}
-
-resource "aws_dynamodb_table" "nonces" {
-  name         = "escrin-nonces-${terraform.workspace}"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "identity"
-  range_key    = "nonce"
-  tags         = local.tags
-
-  attribute {
-    name = "identity"
-    type = "S"
-  }
-
-  attribute {
-    name = "nonce"
-    type = "B"
-  }
-
-  ttl {
-    attribute_name = "expiry"
-    enabled        = true
-  }
-
-  point_in_time_recovery {
-    enabled = terraform.workspace != "dev"
-  }
-
-  lifecycle {
-    prevent_destroy = true
-  }
-}
-
-resource "aws_dynamodb_table" "chain_state" {
-  name         = "escrin-chain-state-${terraform.workspace}"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "chain"
-  tags         = local.tags
-
-  attribute {
-    name = "chain"
-    type = "N"
-  }
-
-  lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false
   }
 }
 
@@ -153,16 +93,23 @@ resource "aws_dynamodb_table" "verifiers" {
     type = "S"
   }
 
-  point_in_time_recovery {
-    enabled = terraform.workspace != "dev"
-  }
-
   lifecycle {
-    prevent_destroy = true
+    prevent_destroy = false
   }
 }
 
 data "aws_iam_policy_document" "policy" {
+  statement {
+    effect = "Allow"
+    actions = [
+      "kms:GetPublicKey",
+      "kms:Sign",
+    ]
+    resources = [
+      "${aws_kms_key.signer.arn}",
+    ]
+  }
+
   statement {
     effect = "Allow"
     actions = [
@@ -175,10 +122,7 @@ data "aws_iam_policy_document" "policy" {
     ]
     resources = [
       "${aws_dynamodb_table.secrets.arn}",
-      "${aws_dynamodb_table.permits.arn}",
-      "${aws_dynamodb_table.nonces.arn}",
       "${aws_dynamodb_table.verifiers.arn}",
-      "${aws_dynamodb_table.chain_state.arn}",
     ]
   }
 }
@@ -213,14 +157,9 @@ resource "aws_iam_role_policy_attachment" "attach_ec2_policy" {
   policy_arn = aws_iam_policy.policy.arn
 }
 
-resource "aws_iam_group" "dev" {
-  count = terraform.workspace == "dev" ? 1 : 0
-  name  = "dev"
-}
-
 resource "aws_iam_group_policy_attachment" "attach_dev_policy" {
   count      = terraform.workspace == "dev" ? 1 : 0
-  group      = aws_iam_group.dev[count.index].name
+  group      = "dev"
   policy_arn = aws_iam_policy.policy.arn
 }
 

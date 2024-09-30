@@ -1,21 +1,26 @@
 mod cli;
 
-use aes_gcm_siv::AeadInPlace as _;
+use std::collections::hash_map::{Entry, HashMap};
+
 use ethers::{
+    core::{
+        k256::{self, elliptic_curve::group::GroupEncoding as _},
+        utils::keccak256,
+    },
     middleware::MiddlewareBuilder,
     providers::{Http, Middleware, Provider},
     signers::Signer as _,
-    types::Bytes,
+    types::{transaction::eip712::Eip712 as _, Address, Signature, H256},
 };
-use eyre::{Result, WrapErr as _};
-use rand::RngCore as _;
+use eyre::{ensure, Result, WrapErr as _};
+use futures_util::future::{join_all, try_join_all};
 use s4::SsssClient;
 use ssss::{
-    eth::SsssHub,
-    identity,
+    eth::SsssPermitter,
     types::{api::*, *},
 };
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
+use vsss_rs::PedersenResult as _;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -34,199 +39,288 @@ async fn main() -> Result<()> {
         .init();
 
     match args.command {
+        cli::Command::GetSsssSigner {
+            ssss: cli::Ssss { ssss },
+        } => {
+            let signer = SsssClient::new(ssss).signer().await?;
+            println!("0x{:x}", signer);
+        }
         cli::Command::SetPolicy {
-            policy_path,
-            verifier,
-            args:
+            wp:
                 cli::WritePermitterArgs {
-                    wallet,
                     gateway,
                     permitter,
-                    identity,
-                    ..
+                    wallet,
                 },
+            il,
+            verifier,
+            policy_path,
+            sssss: cli::Sssss { sssss },
         } => {
             let input: Box<dyn std::io::Read> = match policy_path {
                 Some(p) => Box::new(std::fs::File::open(p)?),
                 None => Box::new(std::io::stdin()),
             };
             let policy: serde_json::Value = serde_json::from_reader(input)?;
-            let mut policy_bytes = Vec::new();
-            ciborium::into_writer(&policy, &mut policy_bytes)?;
 
-            let mut preamble_bytes = Vec::with_capacity(policy_bytes.len() + 100);
-            ciborium::into_writer(
-                &PolicyPreamble {
-                    verifier: verifier.to_string(),
-                    policy: policy_bytes,
-                },
-                &mut preamble_bytes,
-            )?;
-
-            let mut cpolicy = Vec::with_capacity(preamble_bytes.len());
-            brotli::BrotliCompress(
-                &mut preamble_bytes.as_slice(),
-                &mut cpolicy,
-                &brotli::enc::backward_references::BrotliEncoderParams {
-                    quality: 11,
-                    size_hint: preamble_bytes.len(),
-                    magic_number: true,
-                    ..Default::default()
-                },
-            )?;
+            let policy_doc = &PolicyDocument {
+                verifier: verifier.to_string(),
+                policy,
+            };
+            let policy_doc_hash = keccak256(serde_json::to_vec(policy_doc)?);
+            let permitter = *permitter;
 
             let (chain, provider) = get_provider(&gateway).await?;
             let provider = provider.with_signer(wallet.private_key.with_chain_id(chain));
-            let ssss = SsssHub::new(chain, *permitter, provider);
+            let ssss_permitter = SsssPermitter::new(permitter, provider.into());
 
-            ssss.set_policy((*identity).into(), cpolicy).await?;
+            let identity_id = (*il.identity).into();
+            let existing_policy_hash = ssss_permitter.policy_hash(identity_id).await?;
+            if policy_doc_hash != existing_policy_hash.0 {
+                let tx_hash = ssss_permitter
+                    .set_policy_hash(identity_id, policy_doc_hash)
+                    .await?;
+                eprintln!("0x{tx_hash:x}");
+            }
+
+            try_join_all(sssss.into_iter().map(|ssss_url| async move {
+                SsssClient::new(ssss_url)
+                    .set_policy(il.into(), permitter, policy_doc)
+                    .await
+            }))
+            .await?;
         }
-        cli::Command::Deal {
-            secret,
-            version,
-            sssss,
-            threshold,
-            args:
+        cli::Command::SetApprovers {
+            wp:
                 cli::WritePermitterArgs {
                     gateway,
                     permitter,
-                    identity,
                     wallet,
                 },
+            identity,
+            sssss: cli::Sssss { sssss },
+            threshold,
         } => {
-            let ssss_identities =
-                futures_util::future::try_join_all(sssss.iter().map(|maybe_ssss_url| async {
-                    Ok::<_, eyre::Error>(
-                        SsssClient::new(maybe_ssss_url.parse()?)
-                            .get_ssss_identity()
-                            .await?
-                            .persistent
-                            .to_public_key()?,
-                    )
-                }))
-                .await?;
+            let threshold = s4::calculate_threshold(sssss.len() as u64, *threshold);
+
+            let signers = try_join_all(
+                sssss
+                    .into_iter()
+                    .map(|ssss_url| async move { SsssClient::new(ssss_url).signer().await }),
+            )
+            .await?;
+
+            let signers_root = s4::generate_signer_proof(&signers, &[])?.0[0];
 
             let (chain, provider) = get_provider(&gateway).await?;
             let provider = provider.with_signer(wallet.private_key.with_chain_id(chain));
-            let ssss = SsssHub::new(chain, *permitter, provider);
+            let ssss_permitter = SsssPermitter::new(*permitter, provider.into());
 
-            let mut rng = rand::thread_rng();
-
-            let mut nonce = [0u8; 32];
-            rng.fill_bytes(&mut nonce);
-            let shares_nonce = {
-                let mut n = [0u8; 12];
-                n.copy_from_slice(&nonce[0..12]);
-                n.into()
-            };
-
-            let limit = sssss.len();
-
-            let mut shares = if limit == 1 {
-                warn!("with only one SSSS shareholder, ensure that you trust it completely!");
-                let secret = match secret {
-                    Some(s) => s.to_vec(),
-                    None => {
-                        let mut s = vec![0u8; 32];
-                        rng.fill_bytes(&mut s);
-                        debug!("the secret is {:x}", Bytes::from(s.to_vec()));
-                        s
-                    }
-                };
-                vec![secret]
-            } else {
-                let threshold = if *threshold > 1.0 {
-                    *threshold as usize
-                } else {
-                    (*threshold * (limit as f64)).ceil() as usize
-                };
-                let secret = match secret {
-                    Some(s) => p384::Scalar::from_slice(&s)?,
-                    None => {
-                        let mut scalar_bytes = [0u8; 48];
-                        rng.fill_bytes(&mut scalar_bytes);
-                        debug!("the secret is {:x}", Bytes::from(scalar_bytes));
-                        p384::Scalar::from_bytes(&scalar_bytes.into()).unwrap()
-                    }
-                };
-                vsss_rs::shamir::split_secret::<p384::Scalar, u8, Vec<u8>>(
-                    threshold,
-                    limit,
-                    secret,
-                    &mut rand::thread_rng(),
-                )
-                .map_err(|e| eyre::eyre!("vss error: {e}"))?
-            };
-
-            let my_identity = ssss::identity::Identity::ephemeral();
-            my_identity.public_key();
-
-            for (i, ssss_identity) in ssss_identities.into_iter().enumerate() {
-                let cipher = my_identity
-                    .derive_shared_cipher(ssss_identity, identity::DEAL_SHARES_DOMAIN_SEP);
-                cipher
-                    .encrypt_in_place(&shares_nonce, &[], &mut shares[i])
-                    .unwrap();
-            }
-
-            ssss.deal_shares_sss(
-                (*identity).into(),
-                *version,
-                my_identity.public_key().to_sec1_bytes().into_vec(),
-                nonce,
-                shares.into_iter().map(Bytes::from).collect(),
-            )
-            .await?;
-        }
-        cli::Command::Reconstruct {
-            il,
-            version,
-            sssss,
-            wallet,
-        } => {
-            let wallet = &*wallet;
-            let shares =
-                futures_util::future::try_join_all(sssss.iter().map(|url_str| async move {
-                    let url: url::Url = url_str.parse()?;
-                    SsssClient::new(url)
-                        .get_share("omni", il.into(), *version, wallet, None)
-                        .await
-                }))
+            ssss_permitter
+                .set_approvers_root((*identity).into(), signers_root, threshold)
                 .await?;
-
-            let secret = vsss_rs::combine_shares::<p384::Scalar, u8, Vec<u8>>(
-                &shares.into_iter().map(|s| s.1).collect::<Vec<_>>(),
-            )
-            .map_err(|_| eyre::eyre!("failed to reconstruct shares"))?;
-
-            println!("{:x}", Bytes::from(secret.to_bytes().to_vec()))
         }
         cli::Command::AcquireIdentity {
-            ssss,
+            sssss: cli::Sssss { sssss },
             il,
-            wallet,
+            wp:
+                cli::WritePermitterArgs {
+                    gateway,
+                    permitter,
+                    wallet,
+                },
             duration,
             authorization,
             context,
-            permitter,
             recipient,
+            threshold,
         } => {
-            let permit_created = SsssClient::new(ssss.parse()?)
-                .acquire_identity(
-                    il.into(),
-                    &AcqRelIdentityRequest {
-                        duration,
-                        authorization,
-                        context,
-                        permitter: (*permitter),
-                        recipient,
-                    },
-                    wallet.as_deref(),
-                )
+            let threshold = s4::calculate_threshold(sssss.len() as u64, *threshold);
+
+            let (chain, provider) = get_provider(&gateway).await?;
+            let provider = provider.with_signer(wallet.private_key.clone().with_chain_id(chain));
+
+            let req = &AcqRelIdentityRequest {
+                permitter: *permitter,
+                recipient,
+                base_block: provider.get_block_number().await?.low_u64(),
+                duration: Some(duration),
+                authorization,
+                context,
+            };
+
+            let ssss_clients: Vec<_> = sssss.into_iter().map(SsssClient::new).collect();
+
+            let signers = try_join_all(ssss_clients.iter().map(|ssss| ssss.signer())).await?;
+
+            let permit_responses = join_all(ssss_clients.iter().map(|ssss| {
+                let wallet = &wallet;
+                async move {
+                    ssss.request_acquire_identity_permit(il.into(), req, Some(wallet))
+                        .await
+                }
+            }))
+            .await
+            .into_iter()
+            .filter_map(|res| res.ok())
+            .collect::<Vec<_>>();
+
+            // SSSSs are not guaranteed to return the same permit, so we take the most common one.
+            let (permit, signatures) = {
+                let mut signers_by_permit: HashMap<H256, (SsssPermit, Vec<(Address, Signature)>)> =
+                    HashMap::new();
+                for res in permit_responses.into_iter() {
+                    let v = (res.signer, res.signature);
+                    match signers_by_permit.entry(res.permit.struct_hash()?.into()) {
+                        Entry::Occupied(mut oe) => oe.get_mut().1.push(v),
+                        Entry::Vacant(ve) => {
+                            ve.insert((res.permit, vec![v]));
+                        }
+                    }
+                }
+                let (_, (permit, signatures)) = signers_by_permit
+                    .into_iter()
+                    .max_by_key(|(_, (_, sigs))| sigs.len())
+                    .ok_or_else(|| eyre::eyre!("no permits granted"))?;
+                if signatures.len() != signers.len() {
+                    warn!("some SSSSs did not return the same permit");
+                }
+                (permit, signatures)
+            };
+            ensure!(signatures.len() as u64 >= threshold, "quorum not reached");
+
+            let (proof, proof_flags, leaves) = s4::generate_signer_proof(
+                &signers,
+                &signatures.iter().map(|(addr, _)| *addr).collect::<Vec<_>>(),
+            )?;
+
+            let ssss_permitter = SsssPermitter::new(*permitter, provider.into());
+
+            let mut signatures_by_address = signatures.into_iter().collect::<HashMap<_, _>>();
+            let ordered_signatures = leaves
+                .into_iter()
+                .map(|l| {
+                    let sig = signatures_by_address.remove(&l).unwrap();
+                    (l, sig)
+                })
+                .collect::<Vec<_>>();
+
+            ssss_permitter
+                .acquire_identity(permit, threshold, (proof, proof_flags), ordered_signatures)
                 .await?;
-            if permit_created {
-                info!("SSSS optimistically created permit");
+        }
+        cli::Command::Deal {
+            sssss: cli::Sssss { sssss },
+            il,
+            name,
+            version,
+            threshold,
+            secret,
+            wallet,
+        } => {
+            let threshold = s4::calculate_threshold(sssss.len() as u64, *threshold) as usize;
+            ensure!(sssss.len() >= threshold, "not enough SSSSs supplied");
+            ensure!(threshold >= 2, "threshold must be at least 2");
+
+            let mut rng = rand::thread_rng();
+
+            const SECRET_SIZE: usize = 32;
+            let (secret, print_secret) = match secret {
+                Some(secret) => {
+                    ensure!(
+                        secret.len() == SECRET_SIZE,
+                        "invalid secret size. expected exactly {SECRET_SIZE} bytes"
+                    );
+                    (k256::NonZeroScalar::try_from(secret.as_ref())?, false)
+                }
+                None => (k256::NonZeroScalar::random(&mut rng), true),
+            };
+
+            let shares: Vec<api::SecretShare> = {
+                let res =
+                    vsss_rs::pedersen::split_secret::<k256::ProjectivePoint, u64, (u64, Vec<u8>)>(
+                        threshold,
+                        sssss.len(),
+                        *secret,
+                        None,
+                        Some(k256::ProjectivePoint::GENERATOR),
+                        Some(*PEDERSEN_VSS_BLINDER_GENERATOR),
+                        &mut rand::thread_rng(),
+                    )
+                    .map_err(|e| eyre::eyre!("vss error: {e}"))?;
+                res.secret_shares()
+                    .iter()
+                    .cloned()
+                    .zip(res.blinder_shares().iter().cloned())
+                    .map(|((index, share), (_, blinder))| api::SecretShare {
+                        meta: SecretShareMeta {
+                            index,
+                            commitments: res
+                                .pedersen_verifier_set()
+                                .iter()
+                                .skip(2) // the library adds the generators as the first two elements
+                                .map(|p| p.to_bytes().to_vec())
+                                .collect(),
+                        },
+                        share: share.into(),
+                        blinder: blinder.into(),
+                    })
+                    .collect()
+            };
+
+            let share_id = ShareId {
+                identity: il.into(),
+                secret_name: name.clone(),
+                version: *version,
+            };
+
+            let ssss_clients = sssss.into_iter().map(SsssClient::new).collect::<Vec<_>>();
+            try_join_all(
+                ssss_clients
+                    .iter()
+                    .zip(shares.into_iter())
+                    .map(|(ssss, share)| ssss.deal_share(&share_id, share, &wallet)),
+            )
+            .await?;
+
+            try_join_all(
+                ssss_clients
+                    .iter()
+                    .map(|ssss| ssss.commit_share(&share_id, &wallet)),
+            )
+            .await?;
+
+            if print_secret {
+                debug!("the secret is {:x}", secret);
             }
+        }
+        cli::Command::Reconstruct {
+            il,
+            name,
+            version,
+            sssss: cli::Sssss { sssss },
+            wallet,
+        } => {
+            let wallet = &*wallet;
+            let share_id = &ShareId {
+                identity: il.into(),
+                secret_name: name,
+                version: *version,
+            };
+            let shares = try_join_all(sssss.into_iter().map(|ssss_url| async move {
+                SsssClient::new(ssss_url).get_share(share_id, wallet).await
+            }))
+            .await?;
+            // TODO: verify shares
+            let secret = vsss_rs::combine_shares::<k256::Scalar, u64, (u64, Vec<u8>)>(
+                &shares
+                    .into_iter()
+                    .map(|s| (s.meta.index, s.share.0.into()))
+                    .collect::<Vec<_>>(),
+            )
+            .map_err(|_| eyre::eyre!("failed to reconstruct shares"))?;
+
+            println!("{:x}", k256::NonZeroScalar::new(secret).unwrap());
         }
     }
 

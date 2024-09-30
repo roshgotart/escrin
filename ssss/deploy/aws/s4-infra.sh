@@ -2,7 +2,7 @@
 
 # s4-infra.sh - A script to manage SSSS infrastructure (using Terraform or OpenTofu)
 
-set -u
+set -eu
 
 terraform_cmd=""
 tf() {
@@ -27,6 +27,7 @@ cdd() {
 log_do() {
 	log "%s..." "$1"
 	shift
+	set +e
 	out="$( ("$@" >/dev/null) 2>&1)"
 	status=$?
 	if [ $status != 0 ]; then
@@ -34,6 +35,7 @@ log_do() {
 		log "$out"
 		exit 1
 	fi
+	set -e
 	log "✅\n"
 }
 
@@ -129,7 +131,7 @@ ensure_tfstate() {
 	log "🔎 Detecting existing state..."
 	if tf import -var "bucket_name=$state_bucket" aws_s3_bucket.tf_state "$state_bucket" >/dev/null 2>&1; then
 		# Next, import the locks table. If it doesn't exist, continue to state application.
-		if tf import -var "bucket_name=$state_bucket" aws_dynamodb_table.tf_locks 'tflocks' >/dev/null 2>&1; then
+		if tf import -var "bucket_name=$state_bucket" aws_dynamodb_table.tf_locks 'escrin.tflocks' >/dev/null 2>&1; then
 			log "✅\n"
 			return 0
 		fi
@@ -219,14 +221,11 @@ unlock() {
 lock() {
 	case "$1" in
 	"-h" | "--help")
-		die "${0} lock [--all]"
-		;;
-	"--all")
-		ensure_locked "$script_dir"
-		ensure_locked "$script_dir/tf_state"
+		die "${0} lock"
 		;;
 	*)
 		ensure_locked "$script_dir"
+		ensure_locked "$script_dir/tf_state"
 		;;
 	esac
 }

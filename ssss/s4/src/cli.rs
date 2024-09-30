@@ -22,10 +22,18 @@ impl Args {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
-    /// Write a new policy to the blockchain for retrieval by the listening SSSSs.
+    /// Obtains the signer address of the SSSS.
+    GetSsssSigner {
+        #[command(flatten)]
+        ssss: Ssss,
+    },
+    /// Write a new policy to the blockchain and send it to the SSSSs.
     SetPolicy {
         #[command(flatten)]
-        args: WritePermitterArgs,
+        wp: WritePermitterArgs,
+
+        #[command(flatten)]
+        il: IdentityLocatorArgs,
 
         #[arg(short, long, value_enum, required = true)]
         verifier: PolicyVerifier,
@@ -33,18 +41,33 @@ pub enum Command {
         /// The file from which to read the JSON policy document or stdin if not specified.
         #[arg(value_hint = ValueHint::FilePath)]
         policy_path: Option<String>,
+
+        #[command(flatten)]
+        sssss: Sssss,
     },
-    /// Acquire an Escrin identity from an SSSS.
+    SetApprovers {
+        #[command(flatten)]
+        wp: WritePermitterArgs,
+
+        #[command(flatten)]
+        identity: IdentityId,
+
+        #[command(flatten)]
+        sssss: Sssss,
+
+        #[command(flatten)]
+        threshold: Threshold,
+    },
+    /// Acquire an Escrin identity from a quorum of SSSSs and post the approvals to the permitter.
     AcquireIdentity {
         #[command(flatten)]
-        ssss: Ssss,
+        sssss: Sssss,
 
         #[command(flatten)]
         il: IdentityLocatorArgs,
 
-        /// Signes the request using this wallet as the relayer.
         #[command(flatten)]
-        wallet: Option<Wallet>,
+        wp: WritePermitterArgs,
 
         #[arg(short, long, default_value_t = 24 * 60 * 60)]
         duration: u64,
@@ -55,16 +78,23 @@ pub enum Command {
         #[arg(short, long, default_value = "0x")]
         context: Bytes,
 
-        #[command(flatten)]
-        permitter: Permitter,
-
         #[arg(short, long, required = true)]
         recipient: Address,
+
+        #[command(flatten)]
+        threshold: Threshold,
     },
     /// Split a secret into shares and deal it to the requested SSSSs.
     Deal {
         #[command(flatten)]
-        args: WritePermitterArgs,
+        sssss: Sssss,
+
+        #[command(flatten)]
+        il: IdentityLocatorArgs,
+
+        /// The secret name.
+        #[arg(short, long, default_value = "omni")]
+        name: String,
 
         /// The secret to deal. A random one is generated if not provided.
         secret: Option<Bytes>,
@@ -73,10 +103,10 @@ pub enum Command {
         version: ShareVersion,
 
         #[command(flatten)]
-        sssss: Sssss,
+        threshold: Threshold,
 
         #[command(flatten)]
-        threshold: Threshold,
+        wallet: Wallet,
     },
     /// Reconstructs a secret from shares requested by the requested SSSSs.
     ///
@@ -84,6 +114,10 @@ pub enum Command {
     Reconstruct {
         #[command(flatten)]
         il: IdentityLocatorArgs,
+
+        /// The secret name.
+        #[arg(short, long, default_value = "omni")]
+        name: String,
 
         #[command(flatten)]
         version: ShareVersion,
@@ -100,7 +134,7 @@ pub enum Command {
 pub struct Ssss {
     /// The SSSS URL.
     #[arg(short, long, default_value = "http://127.0.0.1:1075")]
-    pub ssss: String,
+    pub ssss: url::Url,
 }
 
 #[derive(Clone, Copy, Debug, clap::Args)]
@@ -114,7 +148,7 @@ pub struct ShareVersion {
 pub struct Threshold {
     /// The threshold of SSSSs that must return correct shares for the secret to be reconstructed.
     /// If between 0 and 1, represents a percentage. Greater than 1 represents an absolute number.
-    #[arg(short, long, default_value_t = 0.67)]
+    #[arg(short, long, default_value_t = 0.666666)]
     pub threshold: f64,
 }
 
@@ -140,11 +174,11 @@ pub struct IdentityId {
 
 #[derive(Clone, Debug, clap::Args)]
 pub struct Permitter {
-    /// The address of the SsssPermitter (or SsssHub).
+    /// The address of the SsssPermitter.
     #[arg(
         short,
         long,
-        default_value = "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+        default_value = "0xce00d95c90C17D1d00D400580000F000ABac00B0"
     )]
     pub permitter: Address,
 }
@@ -174,7 +208,7 @@ impl From<IdentityLocatorArgs> for ssss::types::IdentityLocator {
 #[derive(Clone, Debug, clap::Args)]
 pub struct Sssss {
     #[arg(short, long = "ssss", action = Append, default_values = ["http://127.0.0.1:1075"])]
-    pub sssss: Vec<String>,
+    pub sssss: Vec<url::Url>,
 }
 
 #[derive(Clone, Debug, clap::Args)]
@@ -185,9 +219,6 @@ pub struct WritePermitterArgs {
 
     #[command(flatten)]
     pub permitter: Permitter,
-
-    #[command(flatten)]
-    pub identity: IdentityId,
 
     #[command(flatten)]
     pub wallet: Wallet,
@@ -229,8 +260,8 @@ macro_rules! impl_deref_for_args {
 
 impl_deref_for_args! {
     Permitter { permitter: Address },
-    Ssss { ssss: String },
-    Sssss { sssss: Vec<String> },
+    Ssss { ssss: url::Url },
+    Sssss { sssss: Vec<url::Url> },
     Wallet { private_key: ethers::signers::LocalWallet },
     IdentityId { identity: H256 },
     Threshold { threshold: f64 },
